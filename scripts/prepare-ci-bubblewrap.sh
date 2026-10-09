@@ -2,11 +2,8 @@
 set -euo pipefail
 
 # Ubuntu's package transaction scans the hosted image's full dpkg database and
-# runs post-install hooks. CI needs only the signed-archive payload, so pin and
-# verify that payload before extracting it into the ephemeral runner directory.
-readonly BUBBLEWRAP_VERSION='0.9.0-1ubuntu0.1'
-readonly BUBBLEWRAP_SHA256='1b506492bd9c7fd0cdb4f02ac822f1d3e336b0aead5113c1239baf8db5db562a'
-readonly BUBBLEWRAP_URL="https://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
+# runs post-install hooks. CI needs only a signed-archive payload, so download
+# the package directly from the configured APT repository metadata.
 
 : "${RUNNER_TEMP:?prepare-ci-bubblewrap requires RUNNER_TEMP}"
 : "${GITHUB_PATH:?prepare-ci-bubblewrap requires GITHUB_PATH}"
@@ -16,11 +13,22 @@ if [[ "$(uname -s)" != 'Linux' || "$(uname -m)" != 'x86_64' ]]; then
   exit 1
 fi
 
-archive="${RUNNER_TEMP}/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
+archive="${RUNNER_TEMP}/bubblewrap_amd64.deb"
+download_root="${RUNNER_TEMP}/dsh-bubblewrap-download"
 root="${RUNNER_TEMP}/dsh-bubblewrap"
 
-curl --fail --silent --show-error --location --retry 3 --retry-all-errors --output "$archive" "$BUBBLEWRAP_URL"
-printf '%s  %s\n' "$BUBBLEWRAP_SHA256" "$archive" | sha256sum --check --status
+mkdir -p "$download_root"
+rm -f "${download_root}"/bubblewrap_*.deb
+(
+  cd "$download_root"
+  apt-get download bubblewrap
+)
+downloaded_archive="$(find "$download_root" -maxdepth 1 -type f -name 'bubblewrap_*_amd64.deb' -print -quit)"
+if [[ -z "$downloaded_archive" ]]; then
+  echo 'unable to locate downloaded bubblewrap archive' >&2
+  exit 1
+fi
+cp "$downloaded_archive" "$archive"
 mkdir -p "$root"
 dpkg-deb --extract "$archive" "$root"
 printf '%s\n' "$root/usr/bin" >> "$GITHUB_PATH"
